@@ -110,6 +110,7 @@ class DetMetric(nn.Metric):
         self.device_num = device_num
         self.all_reduce = AllReduce(reduce="sum") if device_num > 1 else None
         self.metric_names = ["recall", "precision", "f-score"]
+        self.main_indicator = "f-score"
 
     def clear(self):
         self._gt_labels, self._det_labels = [], []
