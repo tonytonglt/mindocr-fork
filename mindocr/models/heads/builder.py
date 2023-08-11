@@ -12,6 +12,7 @@ supported_heads = [
     'RobustScannerHead',
     'VisionLANHead',
     'ABINetHead',
+    'TableMasterHead',
 ]
 from .cls_head import MobileNetV3Head
 from .conv_head import ConvHead
@@ -26,6 +27,7 @@ from .rec_ctc_head import CTCHead
 from .rec_master_decoder import MasterDecoder
 from .rec_robustscanner_head import RobustScannerHead
 from .rec_visionlan_head import VisionLANHead
+from .table_master_head import TableMasterHead
 
 
 def build_head(head_name, **kwargs):

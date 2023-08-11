@@ -34,24 +34,24 @@ class TableMasterHead(nn.Cell):
                  out_channels=30,
                  headers=8,
                  d_ff=2048,
-                 dropout=0,
+                 dropout=0.,
                  max_text_length=500,
                  loc_reg_num=4,
                  **kwargs):
         super(TableMasterHead, self).__init__()
-        hidden_size = in_channels[-1]
+        hidden_size = in_channels
         self.layers = clones(
             DecoderLayer(headers, hidden_size, dropout, d_ff), 2)
         self.cls_layer = clones(
             DecoderLayer(headers, hidden_size, dropout, d_ff), 1)
         self.bbox_layer = clones(
             DecoderLayer(headers, hidden_size, dropout, d_ff), 1)
-        self.cls_fc = nn.Dropout(hidden_size, out_channels)
+        self.cls_fc = nn.Dense(hidden_size, out_channels)
         self.bbox_fc = nn.SequentialCell(
             # nn.Linear(hidden_size, hidden_size),
             nn.Dense(hidden_size, loc_reg_num),
             nn.Sigmoid())
-        self.norm = nn.LayerNorm(hidden_size)
+        self.norm = nn.LayerNorm([hidden_size])
         self.embedding = Embeddings(d_model=hidden_size, vocab=out_channels)
         self.positional_encoding = PositionalEncoding(d_model=hidden_size)
 
@@ -89,11 +89,13 @@ class TableMasterHead(nn.Cell):
             x = layer(x, feature, src_mask, tgt_mask)
 
         # cls head
+        cls_x = None
         for layer in self.cls_layer:
             cls_x = layer(x, feature, src_mask, tgt_mask)
         cls_x = self.norm(cls_x)
 
         # bbox head
+        bbox_x = None
         for layer in self.bbox_layer:
             bbox_x = layer(x, feature, src_mask, tgt_mask)
         bbox_x = self.norm(bbox_x)
@@ -137,8 +139,8 @@ class TableMasterHead(nn.Cell):
         output = ops.softmax(output)
         return {'structure_probs': output, 'loc_preds': bbox_output}
 
-    def forward(self, feat, targets=None):
-        feat = feat[-1]
+    def construct(self, feat, targets=None):
+        # feat = feat[-1]
         b, c, h, w = feat.shape
         feat = feat.reshape([b, c, h * w])  # flatten 2D feature map
         feat = feat.transpose((0, 2, 1))
@@ -161,7 +163,7 @@ class DecoderLayer(nn.Cell):
         self.feed_forward = FeedForward(d_model, d_ff, dropout)
         self.sublayer = clones(SubLayerConnection(d_model, dropout), 3)
 
-    def forward(self, x, feature, src_mask, tgt_mask):
+    def construct(self, x, feature, src_mask, tgt_mask):
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
         x = self.sublayer[1](
             x, lambda x: self.src_attn(x, feature, feature, src_mask))
@@ -177,15 +179,27 @@ class MultiHeadAttention(nn.Cell):
         self.headers = headers
         self.linears = clones(nn.Dense(d_model, d_model), 4)
         self.attn = None
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(p=dropout)
         self.relu = nn.ReLU()
 
-    def forward(self, query, key, value, mask=None):
+    def construct(self, query, key, value, mask=None):
         B = query.shape[0]
 
         # 1) Do all the linear projections in batch from d_model => h x d_k
+        print(self.linears)
+        """
+        CellList<
+          (0): Dense<input_channels=512, output_channels=512, has_bias=True>
+          (1): Dense<input_channels=512, output_channels=512, has_bias=True>
+          (2): Dense<input_channels=512, output_channels=512, has_bias=True>
+          (3): Dense<input_channels=512, output_channels=512, has_bias=True>
+          >
+        """
+        print('query.shape', query.shape)  # query.shape (20, 499, 512)
+        print('key.shape', key.shape)  # key.shape (20, 499, 512)
+        print('value.shape', value.shape)  # value.shape (20, 499, 512)
         query, key, value = \
-            [l(x).reshape([B, 0, self.headers, self.d_k]).transpose([0, 2, 1, 3])
+            [l(x).reshape([B, -1, self.headers, self.d_k]).transpose([0, 2, 1, 3])
              for l, x in zip(self.linears, (query, key, value))]
         # 2) Apply attention on all the projected vectors in batch
         x, self.attn = self_attention(
@@ -199,9 +213,9 @@ class FeedForward(nn.Cell):
         super(FeedForward, self).__init__()
         self.w_1 = nn.Dense(d_model, d_ff)
         self.w_2 = nn.Dense(d_ff, d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, x):
+    def construct(self, x):
         return self.w_2(self.dropout(ops.relu(self.w_1(x))))
 
 
@@ -213,10 +227,10 @@ class SubLayerConnection(nn.Cell):
 
     def __init__(self, size, dropout):
         super(SubLayerConnection, self).__init__()
-        self.norm = nn.LayerNorm(size)
-        self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm([size])
+        self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, x, sublayer):
+    def construct(self, x, sublayer):
         return x + self.dropout(sublayer(self.norm(x)))
 
 
@@ -254,7 +268,7 @@ class Embeddings(nn.Cell):
         self.lut = nn.Embedding(vocab, d_model)
         self.d_model = d_model
 
-    def forward(self, *input):
+    def construct(self, *input):
         x = input[0]
         return self.lut(x) * math.sqrt(self.d_model)
 
@@ -273,9 +287,9 @@ class PositionalEncoding(nn.Cell):
             ops.arange(0, d_model, 2) * -math.log(10000.0) / d_model)
         pe[:, 0::2] = ops.sin(position * div_term)
         pe[:, 1::2] = ops.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        self.register_buffer('pe', pe)
+        self.pe = pe.unsqueeze(0)
+        # self.register_buffer('pe', pe)
 
-    def forward(self, feat, **kwargs):
+    def construct(self, feat, **kwargs):
         feat = feat + self.pe[:, :ops.shape(feat)[1]]  # pe 1*5000*512
         return self.dropout(feat)

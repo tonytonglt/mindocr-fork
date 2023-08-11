@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import numpy as np
-# import paddle
-from mindspore import ops, Tensor
+from mindspore import Tensor
 import re
 
+__all__ = ["TableMasterLabelDecode"]
 
 class BaseRecLabelDecode(object):
     """ Convert between text-label and text-index """

@@ -1,20 +1,10 @@
-# Copyright (c) 2022 PaddlePaddle Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 """
 This code is refer from:
 https://github.com/JiaquanYe/TableMASTER-mmocr/blob/master/mmocr/models/textrecog/backbones/table_resnet_extra.py
 """
+from ._registry import register_backbone_class, register_backbone
+
+__all__ = ['table_resnet_extra']
 
 import mindspore as ms
 from mindspore import nn, ops
@@ -35,11 +25,12 @@ class BasicBlock(nn.Cell):
             kernel_size=3,
             stride=stride,
             padding=1,
-            bias_attr=False)
+            pad_mode="pad",
+            has_bias=False)
         self.bn1 = nn.BatchNorm2d(planes, momentum=0.9)
         self.relu = nn.ReLU()
         self.conv2 = nn.Conv2d(
-            planes, planes, kernel_size=3, stride=1, padding=1, bias_attr=False)
+            planes, planes, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=False)
         self.bn2 = nn.BatchNorm2d(planes, momentum=0.9)
         self.downsample = downsample
         self.stride = stride
@@ -98,12 +89,13 @@ class TableResNetExtra(nn.Cell):
             kernel_size=3,
             stride=1,
             padding=1,
-            bias_attr=False)
+            pad_mode="pad",
+            has_bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu1 = nn.ReLU()
 
         self.conv2 = nn.Conv2d(
-            64, 128, kernel_size=3, stride=1, padding=1, bias_attr=False)
+            64, 128, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=False)
         self.bn2 = nn.BatchNorm2d(128)
         self.relu2 = nn.ReLU()
 
@@ -117,7 +109,7 @@ class TableResNetExtra(nn.Cell):
             gcb_config=get_gcb_config(gcb_config, 0))
 
         self.conv3 = nn.Conv2d(
-            256, 256, kernel_size=3, stride=1, padding=1, bias_attr=False)
+            256, 256, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=False)
         self.bn3 = nn.BatchNorm2d(256)
         self.relu3 = nn.ReLU()
 
@@ -131,7 +123,7 @@ class TableResNetExtra(nn.Cell):
             gcb_config=get_gcb_config(gcb_config, 1))
 
         self.conv4 = nn.Conv2d(
-            256, 256, kernel_size=3, stride=1, padding=1, bias_attr=False)
+            256, 256, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=False)
         self.bn4 = nn.BatchNorm2d(256)
         self.relu4 = nn.ReLU()
 
@@ -145,7 +137,7 @@ class TableResNetExtra(nn.Cell):
             gcb_config=get_gcb_config(gcb_config, 2))
 
         self.conv5 = nn.Conv2d(
-            512, 512, kernel_size=3, stride=1, padding=1, bias_attr=False)
+            512, 512, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=False)
         self.bn5 = nn.BatchNorm2d(512)
         self.relu5 = nn.ReLU()
 
@@ -157,7 +149,7 @@ class TableResNetExtra(nn.Cell):
             gcb_config=get_gcb_config(gcb_config, 3))
 
         self.conv6 = nn.Conv2d(
-            512, 512, kernel_size=3, stride=1, padding=1, bias_attr=False)
+            512, 512, kernel_size=3, stride=1, padding=1, pad_mode="pad", has_bias=False)
         self.bn6 = nn.BatchNorm2d(512)
         self.relu6 = nn.ReLU()
 
@@ -172,7 +164,7 @@ class TableResNetExtra(nn.Cell):
                     planes * block.expansion,
                     kernel_size=1,
                     stride=stride,
-                    bias_attr=False),
+                    has_bias=False),
                 nn.BatchNorm2d(planes * block.expansion), )
 
         layers = []
@@ -201,29 +193,33 @@ class TableResNetExtra(nn.Cell):
         x = self.relu2(x)
 
         x = self.maxpool1(x)
+        print(111)
         x = self.layer1(x)
-
+        print(222)
         x = self.conv3(x)
         x = self.bn3(x)
         x = self.relu3(x)
         f.append(x)
 
         x = self.maxpool2(x)
+        print(333)
         x = self.layer2(x)
-
+        print(444)
         x = self.conv4(x)
         x = self.bn4(x)
         x = self.relu4(x)
         f.append(x)
 
         x = self.maxpool3(x)
-
+        print(555)
         x = self.layer3(x)
+        print(666)
         x = self.conv5(x)
         x = self.bn5(x)
         x = self.relu5(x)
-
+        print(777)
         x = self.layer4(x)
+        print(888)
         x = self.conv6(x)
         x = self.bn6(x)
         x = self.relu6(x)
@@ -266,7 +262,7 @@ class MultiAspectGCAttention(nn.Cell):
             self.channel_add_conv = nn.SequentialCell(
                 nn.Conv2d(
                     self.inplanes, self.planes, kernel_size=1),
-                nn.LayerNorm([self.planes, 1, 1]),
+                nn.LayerNorm([self.planes, 1, 1], begin_norm_axis=1, begin_params_axis=1),
                 nn.ReLU(),
                 nn.Conv2d(
                     self.planes, self.inplanes, kernel_size=1))
@@ -274,7 +270,7 @@ class MultiAspectGCAttention(nn.Cell):
             self.channel_concat_conv = nn.SequentialCell(
                 nn.Conv2d(
                     self.inplanes, self.planes, kernel_size=1),
-                nn.LayerNorm([self.planes, 1, 1]),
+                nn.LayerNorm([self.planes, 1, 1], begin_norm_axis=1, begin_params_axis=1),
                 nn.ReLU(),
                 nn.Conv2d(
                     self.planes, self.inplanes, kernel_size=1))
@@ -285,7 +281,7 @@ class MultiAspectGCAttention(nn.Cell):
             self.channel_mul_conv = nn.SequentialCell(
                 nn.Conv2d(
                     self.inplanes, self.planes, kernel_size=1),
-                nn.LayerNorm([self.planes, 1, 1]),
+                nn.LayerNorm([self.planes, 1, 1], begin_norm_axis=1, begin_params_axis=1),
                 nn.ReLU(),
                 nn.Conv2d(
                     self.planes, self.inplanes, kernel_size=1))
@@ -336,12 +332,12 @@ class MultiAspectGCAttention(nn.Cell):
 
         return context
 
-    def forward(self, x):
+    def construct(self, x):
         # [N, C, 1, 1]
         context = self.spatial_pool(x)
 
         out = x
-
+        print(self.fusion_type)
         if self.fusion_type == 'channel_mul':
             # [N, C, 1, 1]
             channel_mul_term = ops.sigmoid(self.channel_mul_conv(context))
@@ -362,8 +358,18 @@ class MultiAspectGCAttention(nn.Cell):
                 [out, channel_concat_term.expand([-1, -1, H, W])], axis=1)
             out = self.cat_conv(out)
             # out = F.layer_norm(out, [self.inplanes, H, W])
-            layer_norm = nn.LayerNorm([self.inplanes, H, W])
+            layer_norm = nn.LayerNorm([self.inplanes, H, W], begin_norm_axis=1, begin_params_axis=1)
             out = layer_norm(out)
             out = ops.relu(out)
-
+        print('finished fusion')
         return out
+
+
+@register_backbone
+def table_resnet_extra(pretrained: bool = False, **kwargs):
+    model = TableResNetExtra(in_channels=3, **kwargs)
+
+    if pretrained is True:
+        raise NotImplementedError("The default pretrained checkpoint for `rec_resnet31` backbone does not exist.")
+
+    return model

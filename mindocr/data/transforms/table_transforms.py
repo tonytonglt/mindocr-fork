@@ -2,8 +2,8 @@ import logging
 import numpy as np
 import cv2
 
-
 _logger = logging.getLogger(__name__)
+
 
 class BaseRecLabelEncode(object):
     """ Convert between text-label and text-index """

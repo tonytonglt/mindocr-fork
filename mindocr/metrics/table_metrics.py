@@ -1,4 +1,7 @@
 from .det_metrics import DetMetric
+
+__all__ = ["TableMetric"]
+
 class TableStructureMetric(object):
     def __init__(self,
                  main_indicator='acc',
@@ -67,6 +70,7 @@ class TableMetric(object):
         self.structure_metric = TableStructureMetric(
             del_thead_tbody=del_thead_tbody)
         self.bbox_metric = DetMetric() if compute_bbox_metric else None
+        self.metric_names = ["acc"]
         self.main_indicator = main_indicator
         self.box_format = box_format
         self.reset()

@@ -14,6 +14,7 @@ from .rec_resnet import *
 from .rec_resnet45 import *
 from .rec_svtr import *
 from .rec_vgg import *
+from .table_master_resnet import *
 
 __all__ = []
 __all__.extend(builder.__all__)
