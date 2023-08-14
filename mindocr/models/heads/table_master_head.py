@@ -31,7 +31,7 @@ class TableMasterHead(nn.Cell):
 
     def __init__(self,
                  in_channels,
-                 out_channels=30,
+                 out_channels=43,
                  headers=8,
                  d_ff=2048,
                  dropout=0.,
@@ -186,7 +186,7 @@ class MultiHeadAttention(nn.Cell):
         B = query.shape[0]
 
         # 1) Do all the linear projections in batch from d_model => h x d_k
-        print(self.linears)
+        # print(self.linears)
         """
         CellList<
           (0): Dense<input_channels=512, output_channels=512, has_bias=True>
@@ -195,16 +195,16 @@ class MultiHeadAttention(nn.Cell):
           (3): Dense<input_channels=512, output_channels=512, has_bias=True>
           >
         """
-        print('query.shape', query.shape)  # query.shape (20, 499, 512)
-        print('key.shape', key.shape)  # key.shape (20, 499, 512)
-        print('value.shape', value.shape)  # value.shape (20, 499, 512)
+        # print('query.shape', query.shape)  # query.shape (20, 499, 512)
+        # print('key.shape', key.shape)  # key.shape (20, 499, 512)
+        # print('value.shape', value.shape)  # value.shape (20, 499, 512)
         query, key, value = \
             [l(x).reshape([B, -1, self.headers, self.d_k]).transpose([0, 2, 1, 3])
              for l, x in zip(self.linears, (query, key, value))]
         # 2) Apply attention on all the projected vectors in batch
         x, self.attn = self_attention(
             query, key, value, mask=mask, dropout=self.dropout)
-        x = x.transpose([0, 2, 1, 3]).reshape([B, 0, self.headers * self.d_k])
+        x = x.transpose([0, 2, 1, 3]).reshape([B, -1, self.headers * self.d_k])
         return self.linears[-1](x)
 
 

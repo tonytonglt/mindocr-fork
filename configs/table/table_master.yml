@@ -1,16 +1,16 @@
 system:
   mode: 1 # 0 for graph mode, 1 for pynative mode in MindSpore
-  distribute: False
+  distribute: True
   amp_level: O0
   amp_level_infer: O0 # running inference in O2 mode
   seed: 42
-  log_interval: 100
+  log_interval: 1
   val_while_train: True
   drop_overflow_update: False
   ckpt_max_keep: 3
 
 common:
-  character_dict_path: &character_dict_path /home/mindspore/tl/mindocr-fork/mindocr/utils/dict/table_master_structure_dict.txt
+  character_dict_path: &character_dict_path /home/tongli/workspace/mindocr-fork_11/mindocr/utils/dict/table_master_structure_dict.txt
   max_text_len: &max_text_len 500
   batch_size: &batch_size 10
   box_format: &box_format 'xywh' # 'xywh', 'xyxy', 'xyxyxyxy'
@@ -29,6 +29,7 @@ model:
     layers: [ 1,2,5,3 ]
   head:
     name: TableMasterHead
+    out_channels: 43
     hidden_size: 512
     headers: 8
     dropout: 0.
@@ -58,7 +59,7 @@ scheduler:
   decay_rate: 0.1
   lr: 0.001
   num_epochs: 17
-  warmup_epochs: 1
+  warmup_epochs: 0
 
 optimizer:
   opt: adam
@@ -77,8 +78,8 @@ train:
   ema: True
   dataset:
     type: PubTabDataset
-    data_dir: /home/mindspore/tl/data/pubtabnet/train/
-    label_file_list: [/home/mindspore/tl/data/pubtabnet/PubTabNet_2.0.0_train.jsonl]
+    data_dir: /home/tongli/data/pubtabnet/train/
+    label_file_list: [/home/tongli/data/pubtabnet/PubTabNet_2.0.0_train.jsonl]
     sample_ratio_list: [1.0]
     shuffle: True
     transform_pipeline:
@@ -107,7 +108,7 @@ train:
       - ToCHWImage:
     output_columns: [ "image", "structure", "bboxes", "bbox_masks", "shape" ]
     net_input_column_index: [ 0, 1 ]
-    label_column_index: [ 1, 2, 3, 4 ]
+    label_column_index: [ 1, 2, 3 ]
 
   loader:
     shuffle: True
@@ -121,8 +122,8 @@ eval:
   dataset_sink_mode: False
   dataset:
     type: PubTabDataset
-    data_dir: /home/mindspore/tl/data/pubtabnet/train/
-    label_file_list: [ /home/mindspore/tl/data/pubtabnet/PubTabNet_2.0.0_val.jsonl ]
+    data_dir: /home/tongli/data/pubtabnet/train/
+    label_file_list: [ /home/tongli/data/pubtabnet/PubTabNet_2.0.0_val.jsonl ]
     sample_ratio_list: [ 1.0 ]
     shuffle: True
     transform_pipeline:
@@ -151,7 +152,7 @@ eval:
       - ToCHWImage:
     output_columns: [ "image", "structure", "bboxes", "bbox_masks", "shape" ]
     net_input_column_index: [ 0, 1 ]
-    label_column_index: [ 1, 2, 3, 4 ]
+    label_column_index: [ 1, 2, 3 ]
 
   loader:
     shuffle: False

@@ -193,33 +193,25 @@ class TableResNetExtra(nn.Cell):
         x = self.relu2(x)
 
         x = self.maxpool1(x)
-        print(111)
         x = self.layer1(x)
-        print(222)
         x = self.conv3(x)
         x = self.bn3(x)
         x = self.relu3(x)
         f.append(x)
 
         x = self.maxpool2(x)
-        print(333)
         x = self.layer2(x)
-        print(444)
         x = self.conv4(x)
         x = self.bn4(x)
         x = self.relu4(x)
         f.append(x)
 
         x = self.maxpool3(x)
-        print(555)
         x = self.layer3(x)
-        print(666)
         x = self.conv5(x)
         x = self.bn5(x)
         x = self.relu5(x)
-        print(777)
         x = self.layer4(x)
-        print(888)
         x = self.conv6(x)
         x = self.bn6(x)
         x = self.relu6(x)
@@ -337,7 +329,6 @@ class MultiAspectGCAttention(nn.Cell):
         context = self.spatial_pool(x)
 
         out = x
-        print(self.fusion_type)
         if self.fusion_type == 'channel_mul':
             # [N, C, 1, 1]
             channel_mul_term = ops.sigmoid(self.channel_mul_conv(context))
@@ -361,7 +352,6 @@ class MultiAspectGCAttention(nn.Cell):
             layer_norm = nn.LayerNorm([self.inplanes, H, W], begin_norm_axis=1, begin_params_axis=1)
             out = layer_norm(out)
             out = ops.relu(out)
-        print('finished fusion')
         return out
 
 
