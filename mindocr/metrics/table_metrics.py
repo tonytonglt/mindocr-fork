@@ -2,6 +2,7 @@ from .det_metrics import DetMetric
 
 __all__ = ["TableMetric"]
 
+
 class TableStructureMetric(object):
     def __init__(self,
                  main_indicator='acc',
@@ -11,9 +12,9 @@ class TableStructureMetric(object):
         self.main_indicator = main_indicator
         self.eps = eps
         self.del_thead_tbody = del_thead_tbody
-        self.reset()
+        self.clear()
 
-    def __call__(self, pred_label, batch=None, *args, **kwargs):
+    def update(self, pred_label, batch=None, *args, **kwargs):
         preds, labels = pred_label
         pred_structure_batch_list = preds['structure_batch_list']
         gt_structure_batch_list = labels['structure_batch_list']
@@ -36,17 +37,17 @@ class TableStructureMetric(object):
         self.correct_num += correct_num
         self.all_num += all_num
 
-    def get_metric(self):
+    def eval(self):
         """
         return metrics {
                  'acc': 0,
             }
         """
         acc = 1.0 * self.correct_num / (self.all_num + self.eps)
-        self.reset()
+        self.clear()
         return {'acc': acc}
 
-    def reset(self):
+    def clear(self):
         self.correct_num = 0
         self.all_num = 0
         self.len_acc_num = 0
@@ -73,10 +74,10 @@ class TableMetric(object):
         self.metric_names = ["acc"]
         self.main_indicator = main_indicator
         self.box_format = box_format
-        self.reset()
+        self.clear()
 
-    def __call__(self, pred_label, batch=None, *args, **kwargs):
-        self.structure_metric(pred_label)
+    def update(self, pred_label, batch=None, *args, **kwargs):
+        self.structure_metric.update(pred_label)
         if self.bbox_metric is not None:
             self.bbox_metric(*self.prepare_bbox_metric_input(pred_label))
 
@@ -109,11 +110,11 @@ class TableMetric(object):
             [0, 0, gt_bbox_batch_list, gt_ignore_tags_batch_list]
         ]
 
-    def get_metric(self):
-        structure_metric = self.structure_metric.get_metric()
+    def eval(self):
+        structure_metric = self.structure_metric.eval()
         if self.bbox_metric is None:
             return structure_metric
-        bbox_metric = self.bbox_metric.get_metric()  # TODO:
+        bbox_metric = self.bbox_metric.eval()  # TODO:
         if self.main_indicator == self.bbox_metric.main_indicator:
             output = bbox_metric
             for sub_key in structure_metric:
@@ -125,8 +126,8 @@ class TableMetric(object):
                 output["bbox_metric_{}".format(sub_key)] = bbox_metric[sub_key]
         return output
 
-    def reset(self):
-        self.structure_metric.reset()
+    def clear(self):
+        self.structure_metric.clear()
         if self.bbox_metric is not None:
             self.bbox_metric.clear()  # TODO: is clear() == reset()?
 

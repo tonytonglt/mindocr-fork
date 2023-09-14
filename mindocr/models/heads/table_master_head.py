@@ -15,7 +15,8 @@
 This code is refer from:
 https://github.com/JiaquanYe/TableMASTER-mmocr/blob/master/mmocr/models/textrecog/decoders/master_decoder.py
 """
-
+from typing import Optional, Tuple
+import numpy as np
 import copy
 import math
 import mindspore as ms
@@ -37,118 +38,209 @@ class TableMasterHead(nn.Cell):
                  dropout=0.,
                  max_text_length=500,
                  loc_reg_num=4,
+                 share_parameter=False,
+                 stacks=3,
                  **kwargs):
         super(TableMasterHead, self).__init__()
         hidden_size = in_channels
-        self.layers = clones(
-            DecoderLayer(headers, hidden_size, dropout, d_ff), 2)
-        self.cls_layer = clones(
-            DecoderLayer(headers, hidden_size, dropout, d_ff), 1)
-        self.bbox_layer = clones(
-            DecoderLayer(headers, hidden_size, dropout, d_ff), 1)
+        # self.layers = clones(
+        #     DecoderLayer(headers, hidden_size, dropout, d_ff), 2)
+        self.cls_layer = DecoderLayer(headers, hidden_size, dropout, d_ff)
+        self.bbox_layer = DecoderLayer(headers, hidden_size, dropout, d_ff)
         self.cls_fc = nn.Dense(hidden_size, out_channels)
         self.bbox_fc = nn.SequentialCell(
             # nn.Linear(hidden_size, hidden_size),
             nn.Dense(hidden_size, loc_reg_num),
             nn.Sigmoid())
-        self.norm = nn.LayerNorm([hidden_size])
-        self.embedding = Embeddings(d_model=hidden_size, vocab=out_channels)
-        self.positional_encoding = PositionalEncoding(d_model=hidden_size)
 
-        self.SOS = out_channels - 3
-        self.PAD = out_channels - 1
+        # self.embedding = Embeddings(d_model=hidden_size, vocab=out_channels)
+        # self.positional_encoding = PositionalEncoding(d_model=hidden_size)
+
+
         self.out_channels = out_channels
         self.loc_reg_num = loc_reg_num
         self.max_text_length = max_text_length
 
-    def make_mask(self, tgt):
+        self.share_parameter = share_parameter
+
+        self.attention = nn.CellList(
+            [
+                MultiHeadAttention(headers, in_channels, dropout)
+                for _ in range(1 if share_parameter else stacks)
+            ]
+        )
+
+        self.source_attention = nn.CellList(
+            [
+                MultiHeadAttention(headers, in_channels, dropout)
+                for _ in range(1 if share_parameter else stacks)
+            ]
+        )
+
+        self.position_feed_forward = nn.CellList(
+            [
+                PositionwiseFeedForward(in_channels, d_ff, dropout)
+                for _ in range(1 if share_parameter else stacks)
+            ]
+        )
+
+        self.position = PositionalEncoding(in_channels, dropout)
+        self.stacks = stacks
+        self.dropout = nn.Dropout(p=dropout)
+        self.layer_norm1 = nn.LayerNorm([hidden_size])
+        self.layer_norm2 = nn.LayerNorm([hidden_size])
+        self.layer_norm3 = nn.LayerNorm([hidden_size])
+        self.layer_norm4 = nn.LayerNorm([hidden_size])
+        self.embedding = nn.Embedding(out_channels, in_channels)
+        self.sqrt_model_size = np.sqrt(in_channels)
+        self.SOS = out_channels - 3
+        self.PAD = out_channels - 1
+
+        self.tril = ops.tril
+        self.argmax = ops.Argmax(axis=-1)
+
+    def make_mask(self, targets):
         """
         Make mask for self attention.
         :param src: [b, c, h, l_src]
         :param tgt: [b, l_tgt]
         :return:
         """
-        trg_pad_mask = (tgt != self.PAD).unsqueeze(1).unsqueeze(3)
+        target_pad_mask = targets != self.PAD
+        target_pad_mask = target_pad_mask[:, None, :, None]
+        target_pad_mask = ops.cast(target_pad_mask, ms.int32)
+        target_length = targets.shape[1]
+        target_sub_mask = self.tril(ops.ones((target_length, target_length), ms.int32))
+        target_mask = ops.bitwise_and(target_pad_mask, target_sub_mask)
+        return target_mask
 
-        tgt_len = ops.shape(tgt)[1]
-        trg_sub_mask = ops.tril(
-            ops.ones(
-                ([tgt_len, tgt_len]), dtype=ms.float32))
-
-        tgt_mask = ops.logical_and(
-            trg_pad_mask.astype(ms.float32), trg_sub_mask)
-        return tgt_mask.astype(ms.float32)
-
-    def decode(self, input, feature, src_mask, tgt_mask):
+    def decode(self, feature, targets,  src_mask=None, tgt_mask=None):
         # main process of transformer decoder.
-        x = self.embedding(input)  # x: 1*x*512, feature: 1*3600,512
-        x = self.positional_encoding(x)
+        # x = self.embedding(input)  # x: 1*x*512, feature: 1*3600,512
+        # x = self.positional_encoding(x)
+        #
+        # # origin transformer layers
+        # for i, layer in enumerate(self.layers):
+        #     x = layer(x, feature, src_mask, tgt_mask)
+        #
+        # # cls head
+        # cls_x = self.cls_layer(x, feature, src_mask, tgt_mask)
+        # cls_x = self.norm(cls_x)
+        #
+        # # bbox head
+        # bbox_x = self.bbox_layer(x, feature, src_mask, tgt_mask)
+        # bbox_x = self.norm(bbox_x)
+        # return self.cls_fc(cls_x), self.bbox_fc(bbox_x)
+        targets = self.embedding(targets) * self.sqrt_model_size
+        targets = self.position(targets)
+        output = targets
+        for i in range(self.stacks):
+            if self.share_parameter:
+                actual_i = i
+            else:
+                actual_i = 0
 
-        # origin transformer layers
-        for i, layer in enumerate(self.layers):
-            x = layer(x, feature, src_mask, tgt_mask)
+            normed_output = self.layer_norm1(output)
+            output = output + self.dropout(
+                self.attention[actual_i](
+                    normed_output, normed_output, normed_output, tgt_mask
+                )
+            )
+            normed_output = self.layer_norm2(output)
+            output = output + self.dropout(
+                self.source_attention[actual_i](
+                    normed_output, feature, feature, src_mask
+                )
+            )
+            normed_output = self.layer_norm3(output)
+            output = output + self.dropout(
+                self.position_feed_forward[actual_i](normed_output)
+            )
 
-        # cls head
-        cls_x = None
-        for layer in self.cls_layer:
-            cls_x = layer(x, feature, src_mask, tgt_mask)
-        cls_x = self.norm(cls_x)
+            # cls head
+            cls_x = self.cls_layer(output, feature, src_mask, tgt_mask)
+            cls_x = self.layer_norm4(cls_x)
 
-        # bbox head
-        bbox_x = None
-        for layer in self.bbox_layer:
-            bbox_x = layer(x, feature, src_mask, tgt_mask)
-        bbox_x = self.norm(bbox_x)
-        return self.cls_fc(cls_x), self.bbox_fc(bbox_x)
+            # bbox head
+            bbox_x = self.bbox_layer(output, feature, src_mask, tgt_mask)
+            bbox_x = self.layer_norm4(bbox_x)
+            return self.cls_fc(cls_x), self.bbox_fc(bbox_x)
 
-    def greedy_forward(self, SOS, feature):
-        input = SOS
-        output = ops.zeros(
-            [input.shape[0], self.max_text_length + 1, self.out_channels])
-        bbox_output = ops.zeros(
-            [input.shape[0], self.max_text_length + 1, self.loc_reg_num])
-        max_text_length = Tensor(self.max_text_length)
-        for i in range(max_text_length + 1):
-            target_mask = self.make_mask(input)
-            out_step, bbox_output_step = self.decode(input, feature, None,
-                                                     target_mask)
-            prob = ops.softmax(out_step, axis=-1)
-            next_word = prob.argmax(axis=2, dtype=ms.int64)
-            input = ops.concat(
-                [input, next_word[:, -1].unsqueeze(-1)], axis=1)
-            if i == self.max_text_length:
-                output = out_step
-                bbox_output = bbox_output_step
-        return output, bbox_output
-
-    def forward_train(self, out_enc, targets):
-        # x is token of label
-        # feat is feature after backbone before pe.
-        # out_enc is feature after pe.
-        padded_targets = targets[0]
-        src_mask = None
-        tgt_mask = self.make_mask(padded_targets[:, :-1])
-        output, bbox_output = self.decode(padded_targets[:, :-1], out_enc,
-                                          src_mask, tgt_mask)
-        return {'structure_probs': output, 'loc_preds': bbox_output}
-
-    def forward_test(self, out_enc):
-        batch_size = out_enc.shape[0]
-        SOS = ops.zeros([batch_size, 1], dtype='int64') + self.SOS
-        output, bbox_output = self.greedy_forward(SOS, out_enc)
-        output = ops.softmax(output)
-        return {'structure_probs': output, 'loc_preds': bbox_output}
+    # def greedy_forward(self, SOS, feature):
+    #     input = SOS
+    #     output = ops.zeros(
+    #         [input.shape[0], self.max_text_length + 1, self.out_channels])
+    #     bbox_output = ops.zeros(
+    #         [input.shape[0], self.max_text_length + 1, self.loc_reg_num])
+    #     # max_text_length = Tensor(self.max_text_length)
+    #     for i in range(self.max_text_length + 1):
+    #         target_mask = self.make_mask(input)
+    #         out_step, bbox_output_step = self.decode(input, feature, None,
+    #                                                  target_mask)
+    #         prob = ops.softmax(out_step, axis=-1)
+    #         next_word = prob.argmax(axis=2)
+    #         next_word = ops.cast(next_word, ms.int32)
+    #         input = ops.concat(
+    #             [input, next_word[:, -1].unsqueeze(-1)], axis=1)
+    #         if i == self.max_text_length:
+    #             output = out_step
+    #             bbox_output = bbox_output_step
+    #     return output, bbox_output
+    #
+    # def forward_train(self, out_enc, targets):
+    #     # x is token of label
+    #     # feat is feature after backbone before pe.
+    #     # out_enc is feature after pe.
+    #     padded_targets = targets[0]
+    #     src_mask = None
+    #     tgt_mask = self.make_mask(padded_targets[:, :-1])
+    #     output, bbox_output = self.decode(padded_targets[:, :-1], out_enc,
+    #                                       src_mask, tgt_mask)
+    #     return {'structure_probs': output, 'loc_preds': bbox_output}
+    #
+    # def forward_test(self, out_enc):
+    #     batch_size = out_enc.shape[0]
+    #     SOS = ops.zeros([batch_size, 1], dtype=ms.int32) + self.SOS
+    #     output, bbox_output = self.greedy_forward(SOS, out_enc)
+    #     output = ops.softmax(output)
+    #     # return {'structure_probs': output, 'loc_preds': bbox_output}
+    #     return (output, bbox_output)
 
     def construct(self, feat, targets=None):
         # feat = feat[-1]
+        # b, c, h, w = feat.shape
+        # feat = feat.reshape([b, c, h * w])  # flatten 2D feature map
+        # feat = feat.transpose((0, 2, 1))
+        # out_enc = self.positional_encoding(feat)
+        # if self.training:
+        #     return self.forward_train(out_enc, targets)
+        #
+        # return self.forward_test(out_enc)
+        N = feat.shape[0]
+        num_steps = self.max_text_length + 1
         b, c, h, w = feat.shape
         feat = feat.reshape([b, c, h * w])  # flatten 2D feature map
         feat = feat.transpose((0, 2, 1))
-        out_enc = self.positional_encoding(feat)
-        if self.training:
-            return self.forward_train(out_enc, targets)
-
-        return self.forward_test(out_enc)
+        out_enc = self.position(feat)
+        if targets is not None:
+            # training branch
+            targets = targets[0]
+            targets = targets[:, :-1]
+            target_mask = self.make_mask(targets)
+            logits = self.decode(out_enc, targets, tgt_mask=target_mask)
+            return logits
+        else:
+            targets = ops.zeros((N, 1), ms.int32)
+            probs = list()
+            for i in range(num_steps):
+                target_mask = self.make_mask(targets)
+                probs_step = self._decode(out_enc, targets, target_mask=target_mask)
+                next_input = self.argmax(probs_step)
+                targets = ops.concat([targets, next_input[:, i: i+1]], axis=1)
+                probs.append(probs_step[:, i])
+            probs = ops.stack(probs, axis=1)
+            probs = ops.softmax(probs, axis=-1)
+        return probs
 
 
 class DecoderLayer(nn.Cell):
@@ -160,63 +252,110 @@ class DecoderLayer(nn.Cell):
         super(DecoderLayer, self).__init__()
         self.self_attn = MultiHeadAttention(headers, d_model, dropout)
         self.src_attn = MultiHeadAttention(headers, d_model, dropout)
-        self.feed_forward = FeedForward(d_model, d_ff, dropout)
-        self.sublayer = clones(SubLayerConnection(d_model, dropout), 3)
+        self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
+        # self.sublayer = clones(SubLayerConnection(d_model, dropout), 3)
+        self.norm1 = nn.LayerNorm([d_model])
+        self.dropout1 = nn.Dropout(p=dropout)
+        self.norm2 = nn.LayerNorm([d_model])
+        self.dropout2 = nn.Dropout(p=dropout)
+        self.norm3 = nn.LayerNorm([d_model])
+        self.dropout3 = nn.Dropout(p=dropout)
 
     def construct(self, x, feature, src_mask, tgt_mask):
-        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
-        x = self.sublayer[1](
-            x, lambda x: self.src_attn(x, feature, feature, src_mask))
-        return self.sublayer[2](x, self.feed_forward)
+        # x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
+        # x = self.sublayer[1](
+        #     x, lambda x: self.src_attn(x, feature, feature, src_mask))
+        # return self.sublayer[2](x, self.feed_forward)
+        normed_x = self.norm1(x)
+        x = x + self.dropout1(self.self_attn(normed_x, normed_x, normed_x, tgt_mask))
+        normed_x = self.norm2(x)
+        x = x + self.dropout2(self.src_attn(normed_x, feature, feature, src_mask))
+        normed_x = self.norm3(x)
+        x = x + self.dropout3(self.feed_forward(normed_x))
+        return x
 
 
 class MultiHeadAttention(nn.Cell):
-    def __init__(self, headers, d_model, dropout):
+    def __init__(
+        self, multi_attention_heads: int, dimensions: int, dropout: float = 0.1
+    ) -> None:
+        """ """
         super(MultiHeadAttention, self).__init__()
 
-        assert d_model % headers == 0
-        self.d_k = int(d_model / headers)
-        self.headers = headers
-        self.linears = clones(nn.Dense(d_model, d_model), 4)
-        self.attn = None
+        assert dimensions % multi_attention_heads == 0
+        # requires d_v = d_k, d_q = d_k = d_v = d_m / h
+        self.d_k = int(dimensions / multi_attention_heads)
+        self.h = multi_attention_heads
+        self.linears = nn.CellList([nn.Dense(dimensions, dimensions) for _ in range(4)])
+        self.attention = None
         self.dropout = nn.Dropout(p=dropout)
-        self.relu = nn.ReLU()
 
-    def construct(self, query, key, value, mask=None):
-        B = query.shape[0]
+        self.matmul = ops.BatchMatMul()
 
-        # 1) Do all the linear projections in batch from d_model => h x d_k
-        # print(self.linears)
-        """
-        CellList<
-          (0): Dense<input_channels=512, output_channels=512, has_bias=True>
-          (1): Dense<input_channels=512, output_channels=512, has_bias=True>
-          (2): Dense<input_channels=512, output_channels=512, has_bias=True>
-          (3): Dense<input_channels=512, output_channels=512, has_bias=True>
-          >
-        """
-        # print('query.shape', query.shape)  # query.shape (20, 499, 512)
-        # print('key.shape', key.shape)  # key.shape (20, 499, 512)
-        # print('value.shape', value.shape)  # value.shape (20, 499, 512)
-        query, key, value = \
-            [l(x).reshape([B, -1, self.headers, self.d_k]).transpose([0, 2, 1, 3])
-             for l, x in zip(self.linears, (query, key, value))]
-        # 2) Apply attention on all the projected vectors in batch
-        x, self.attn = self_attention(
-            query, key, value, mask=mask, dropout=self.dropout)
-        x = x.transpose([0, 2, 1, 3]).reshape([B, -1, self.headers * self.d_k])
+    def dot_product_attention(
+        self, query: Tensor, key: Tensor, value: Tensor, mask: Optional[Tensor] = None
+    ) -> Tuple[Tensor, Tensor]:
+
+        d_k = float(value.shape[-1])
+        d_k_sqrt = ops.cast(ms.numpy.sqrt(d_k), query.dtype)
+        score = self.matmul(query, key.transpose(0, 1, 3, 2)) / d_k_sqrt  # (N, h, seq_len, seq_len)
+
+        if mask is not None:
+            score = ops.masked_fill(
+                score, mask == 0, -np.inf
+            )  # score (N, h, seq_len, seq_len)
+
+        p_attn = ops.softmax(score, axis=-1)
+        # (N, h, seq_len, d_v), (N, h, seq_len, seq_len)
+        return self.matmul(p_attn, value), p_attn
+
+    def construct(
+        self, query: Tensor, key: Tensor, value: Tensor, mask: Optional[Tensor] = None
+    ) -> Tensor:
+        N = query.shape[0]
+
+        # do all the linear projections in batch from d_model => h x d_k
+        # (N, seq_len, d_m) -> (N, seq_len, h, d_k) -> (N, h, seq_len, d_k)
+        query = (
+            self.linears[0](query)
+            .reshape(N, -1, self.h, self.d_k)
+            .transpose(0, 2, 1, 3)
+        )
+        # print(self.linears[1])
+        # print(key.shape)
+        key = (
+            self.linears[1](key).reshape(N, -1, self.h, self.d_k).transpose(0, 2, 1, 3)
+        )
+        value = (
+            self.linears[2](value)
+            .reshape(N, -1, self.h, self.d_k)
+            .transpose(0, 2, 1, 3)
+        )
+
+        # apply attention on all the projected vectors in batch.
+        # (N, h, seq_len, d_v), (N, h, seq_len, seq_len)
+        product_and_attention = self.dot_product_attention(query, key, value, mask=mask)
+        x = product_and_attention[0]
+
+        # "Concat" using a view and apply a final linear.
+        # (N, seq_len, d_m)
+        x = x.transpose(0, 2, 1, 3).reshape(N, -1, self.h * self.d_k)
+
+        # (N, seq_len, d_m)
         return self.linears[-1](x)
 
 
-class FeedForward(nn.Cell):
-    def __init__(self, d_model, d_ff, dropout):
-        super(FeedForward, self).__init__()
-        self.w_1 = nn.Dense(d_model, d_ff)
-        self.w_2 = nn.Dense(d_ff, d_model)
+class PositionwiseFeedForward(nn.Cell):
+    def __init__(
+        self, dimensions: int, feed_forward_dimensions: int, dropout: float = 0.1
+    ) -> None:
+        super(PositionwiseFeedForward, self).__init__()
+        self.w_1 = nn.Dense(dimensions, feed_forward_dimensions)
+        self.w_2 = nn.Dense(feed_forward_dimensions, dimensions)
         self.dropout = nn.Dropout(p=dropout)
 
-    def construct(self, x):
-        return self.w_2(self.dropout(ops.relu(self.w_1(x))))
+    def construct(self, input_tensor: Tensor) -> Tensor:
+        return self.w_2(self.dropout(ops.relu(self.w_1(input_tensor))))
 
 
 class SubLayerConnection(nn.Cell):
@@ -234,27 +373,6 @@ class SubLayerConnection(nn.Cell):
         return x + self.dropout(sublayer(self.norm(x)))
 
 
-def masked_fill(x, mask, value):
-    mask = mask.astype(x.dtype)
-    return x * ops.logical_not(mask).astype(x.dtype) + mask * value
-
-
-def self_attention(query, key, value, mask=None, dropout=None):
-    """
-    Compute 'Scale Dot Product Attention'
-    """
-    d_k = value.shape[-1]
-
-    score = ops.matmul(query, key.transpose([0, 1, 3, 2]) / math.sqrt(d_k))
-    if mask is not None:
-        # score = score.masked_fill(mask == 0, -1e9) # b, h, L, L
-        score = masked_fill(score, mask == 0, -6.55e4)  # for fp16
-
-    p_attn = ops.softmax(score, axis=-1)
-
-    if dropout is not None:
-        p_attn = dropout(p_attn)
-    return ops.matmul(p_attn, value), p_attn
 
 
 def clones(module, N):
@@ -266,30 +384,31 @@ class Embeddings(nn.Cell):
     def __init__(self, d_model, vocab):
         super(Embeddings, self).__init__()
         self.lut = nn.Embedding(vocab, d_model)
-        self.d_model = d_model
+        self.sqrt_d_model = ops.sqrt(Tensor(d_model, ms.float32))
 
     def construct(self, *input):
         x = input[0]
-        return self.lut(x) * math.sqrt(self.d_model)
+        return self.lut(x) * self.sqrt_d_model
 
 
 class PositionalEncoding(nn.Cell):
-    """ Implement the PE function. """
-
-    def __init__(self, d_model, dropout=0., max_len=5000):
+    def __init__(
+        self, dimensions: int, dropout: float = 0.1, max_len: int = 5000
+    ) -> None:
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 
         # Compute the positional encodings once in log space.
-        pe = ops.zeros([max_len, d_model])
-        position = ops.arange(0, max_len).unsqueeze(1).astype('float32')
-        div_term = ops.exp(
-            ops.arange(0, d_model, 2) * -math.log(10000.0) / d_model)
-        pe[:, 0::2] = ops.sin(position * div_term)
-        pe[:, 1::2] = ops.cos(position * div_term)
-        self.pe = pe.unsqueeze(0)
-        # self.register_buffer('pe', pe)
+        pe = np.zeros((max_len, dimensions), dtype=np.float32)
+        position = np.arange(0, max_len)[..., None]
+        div_term = np.exp(-np.arange(0, dimensions, 2) * np.log(10000) / dimensions)
+        pe[:, 0::2] = np.sin(position * div_term)
+        pe[:, 1::2] = np.cos(position * div_term)
+        pe = pe[None, ...]
+        self.pe = Tensor(pe, dtype=ms.float32)
 
-    def construct(self, feat, **kwargs):
-        feat = feat + self.pe[:, :ops.shape(feat)[1]]  # pe 1*5000*512
-        return self.dropout(feat)
+    def construct(self, input_tensor: Tensor) -> Tensor:
+        input_tensor = (
+            input_tensor + self.pe[:, : input_tensor.shape[1]]
+        )  # pe 1 5000 512
+        return self.dropout(input_tensor)

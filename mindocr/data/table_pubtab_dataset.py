@@ -72,7 +72,6 @@ class PubTabDataset(BaseDataset):
                         f"Key {k} does not exist in data (available keys: {_data.keys()}). "
                         "Please check the name or the completeness transformation pipeline."
                     )
-        print("prefetch finished")
 
     def get_image_info_list(self, file_list, sample_ratio_list):
         if isinstance(file_list, str):
@@ -112,7 +111,7 @@ class PubTabDataset(BaseDataset):
         try:
             outs = run_transforms(data, transforms=self.transforms)
         except:
-            _logger.warning("data is None after transforms, random choose another data.")
+            # _logger.warning("data is None after transforms, random choose another data.")
             outs = None
         if outs is None:
             rnd_idx = np.random.randint(self.__len__(

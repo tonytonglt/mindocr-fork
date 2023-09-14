@@ -1,16 +1,16 @@
 system:
-  mode: 1 # 0 for graph mode, 1 for pynative mode in MindSpore
+  mode: 0 # 0 for graph mode, 1 for pynative mode in MindSpore
   distribute: True
-  amp_level: O0
-  amp_level_infer: O0 # running inference in O2 mode
+  amp_level: O2
+  amp_level_infer: O2 # running inference in O2 mode
   seed: 42
-  log_interval: 1
+  log_interval: 100
   val_while_train: True
   drop_overflow_update: False
-  ckpt_max_keep: 3
+  ckpt_max_keep: 17
 
 common:
-  character_dict_path: &character_dict_path /home/tongli/workspace/mindocr-fork_11/mindocr/utils/dict/table_master_structure_dict.txt
+  character_dict_path: &character_dict_path /home/mindocr/tongli/workspace/mindocr-fork_9/mindocr/utils/dict/table_master_structure_dict.txt
   max_text_len: &max_text_len 500
   batch_size: &batch_size 10
   box_format: &box_format 'xywh' # 'xywh', 'xyxy', 'xyxyxyxy'
@@ -73,19 +73,19 @@ loss_scaler:
   scale_window: 1000
 
 train:
-  ckpt_save_dir: ./tmp_table
+  ckpt_save_dir: ./table_try1_0914_with_val_graph_O2_8p_follow_master_separated_layernorm_not_cls_n_box_layer
   dataset_sink_mode: False
   ema: True
   dataset:
     type: PubTabDataset
-    data_dir: /home/tongli/data/pubtabnet/train/
-    label_file_list: [/home/tongli/data/pubtabnet/PubTabNet_2.0.0_train.jsonl]
-    sample_ratio_list: [1.0]
+    data_dir: /home/mindocr/tongli/data/pubtabnet/train/
+    label_file_list: [/home/mindocr/tongli/data/pubtabnet/PubTabNet_2.0.0_train.jsonl]
+    sample_ratio_list: [ 1.0 ]
     shuffle: True
     transform_pipeline:
       - DecodeImage:
           img_mode: BGR
-          to_float32: True
+          to_float32: false
       - TableMasterLabelEncode:
           character_dict_path: *character_dict_path
           learn_empty_box: False
@@ -101,10 +101,15 @@ train:
       - TableBoxEncode:
           in_box_format: *box_format
           out_box_format: *box_format
-      - NormalizeImage:
-          is_hwc: True
-          mean: [127.0, 127.0, 127.0]
-          std: [127.0, 127.0, 127.0]
+#      - NormalizeImage:
+#          is_hwc: True
+#          mean: [127.0, 127.0, 127.0]
+#          std: [127.0, 127.0, 127.0]
+      - NormalizeImageFromPaddle:
+          scale: 1./255.
+          mean: [0.5, 0.5, 0.5]
+          std: [0.5, 0.5, 0.5]
+          order: hwc
       - ToCHWImage:
     output_columns: [ "image", "structure", "bboxes", "bbox_masks", "shape" ]
     net_input_column_index: [ 0, 1 ]
@@ -118,12 +123,12 @@ train:
     num_workers: 1
 
 eval:
-  ckpt_load_path: ./tmp_table/best.ckpt
+  ckpt_load_path: ./table_try1_0914_with_val_graph_O2_8p_follow_master_separated_layernorm_not_cls_n_box_layer/best.ckpt
   dataset_sink_mode: False
   dataset:
     type: PubTabDataset
-    data_dir: /home/tongli/data/pubtabnet/train/
-    label_file_list: [ /home/tongli/data/pubtabnet/PubTabNet_2.0.0_val.jsonl ]
+    data_dir: /home/mindocr/tongli/data/pubtabnet/val
+    label_file_list: [ /home/mindocr/tongli/data/pubtabnet/PubTabNet_2.0.0_val.jsonl ]
     sample_ratio_list: [ 1.0 ]
     shuffle: True
     transform_pipeline:
@@ -145,18 +150,23 @@ eval:
       - TableBoxEncode:
           in_box_format: *box_format
           out_box_format: *box_format
-      - NormalizeImage:
-          is_hwc: True
-          mean: [ 127.0, 127.0, 127.0 ]
-          std: [ 127.0, 127.0, 127.0 ]
+#      - NormalizeImage:
+#          is_hwc: True
+#          mean: [ 127.0, 127.0, 127.0 ]
+#          std: [ 127.0, 127.0, 127.0 ]
+      - NormalizeImageFromPaddle:
+          scale: 1./255.
+          mean: [ 0.5, 0.5, 0.5 ]
+          std: [ 0.5, 0.5, 0.5 ]
+          order: hwc
       - ToCHWImage:
     output_columns: [ "image", "structure", "bboxes", "bbox_masks", "shape" ]
     net_input_column_index: [ 0, 1 ]
-    label_column_index: [ 1, 2, 3 ]
+    label_column_index: [ 0, 1, 2, 3, 4 ]
 
   loader:
     shuffle: False
     batch_size: 10
     drop_remainder: False
     max_rowsize: 12
-    num_workers: 8
+    num_workers: 1

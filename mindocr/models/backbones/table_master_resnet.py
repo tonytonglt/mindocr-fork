@@ -9,6 +9,20 @@ __all__ = ['table_resnet_extra']
 import mindspore as ms
 from mindspore import nn, ops
 
+
+class _LayerNorm(nn.Cell):
+    """A temp replacement of nn.LayerNorm([normalized_shape, 1, 1], 1, 1)"""
+    def __init__(self, normalized_shape):
+        super().__init__()
+        self.layer_norm = nn.LayerNorm(normalized_shape)
+
+    def construct(self, x):
+        x = x.reshape((x.shape[0], -1))
+        x = self.layer_norm(x)
+        x = x[..., None, None]
+        return x
+
+
 class BasicBlock(nn.Cell):
     expansion = 1
 
@@ -245,7 +259,7 @@ class MultiAspectGCAttention(nn.Cell):
 
         if pooling_type == 'att':
             self.conv_mask = nn.Conv2d(
-                self.single_header_inplanes, 1, kernel_size=1)
+                self.single_header_inplanes, 1, kernel_size=1, has_bias=True)
             self.softmax = nn.Softmax(axis=2)
         else:
             self.avg_pool = nn.AdaptiveAvgPool2d(1)
@@ -253,16 +267,16 @@ class MultiAspectGCAttention(nn.Cell):
         if fusion_type == 'channel_add':
             self.channel_add_conv = nn.SequentialCell(
                 nn.Conv2d(
-                    self.inplanes, self.planes, kernel_size=1),
-                nn.LayerNorm([self.planes, 1, 1], begin_norm_axis=1, begin_params_axis=1),
+                    self.inplanes, self.planes, kernel_size=1, has_bias=True),
+                _LayerNorm([self.planes]),
                 nn.ReLU(),
                 nn.Conv2d(
-                    self.planes, self.inplanes, kernel_size=1))
+                    self.planes, self.inplanes, kernel_size=1, has_bias=True))
         elif fusion_type == 'channel_concat':
             self.channel_concat_conv = nn.SequentialCell(
                 nn.Conv2d(
                     self.inplanes, self.planes, kernel_size=1),
-                nn.LayerNorm([self.planes, 1, 1], begin_norm_axis=1, begin_params_axis=1),
+                _LayerNorm([self.planes]),
                 nn.ReLU(),
                 nn.Conv2d(
                     self.planes, self.inplanes, kernel_size=1))
@@ -273,7 +287,7 @@ class MultiAspectGCAttention(nn.Cell):
             self.channel_mul_conv = nn.SequentialCell(
                 nn.Conv2d(
                     self.inplanes, self.planes, kernel_size=1),
-                nn.LayerNorm([self.planes, 1, 1], begin_norm_axis=1, begin_params_axis=1),
+                _LayerNorm([self.planes]),
                 nn.ReLU(),
                 nn.Conv2d(
                     self.planes, self.inplanes, kernel_size=1))
@@ -313,7 +327,7 @@ class MultiAspectGCAttention(nn.Cell):
             # [N*headers, 1, H * W, 1]
             context_mask = context_mask.unsqueeze(-1)
             # [N*headers, 1, C', 1] = [N*headers, 1, C', H * W] * [N*headers, 1, H * W, 1]
-            context = ops.matmul(input_x, context_mask)  # batchmatmul?
+            context = ops.matmul(input_x.astype(ms.float16), context_mask.astype(ms.float16)).astype(ms.float32) # batchmatmul?
 
             # [N, headers * C', 1, 1]
             context = context.reshape(

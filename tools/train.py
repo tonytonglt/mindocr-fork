@@ -38,9 +38,31 @@ from mindocr.utils.train_step_wrapper import TrainOneStepWrapper
 logger = logging.getLogger("mindocr.train")
 
 
+class StopAtStep(ms.Callback):
+    def __init__(self, start_step, stop_step):
+        super(StopAtStep).__init__()
+        self.start_step = start_step
+        self.stop_step = stop_step
+        self.profiler = ms.Profiler(start_profile=False, output_path='./data_step_exit_pynative_O2')
+
+    def step_begin(self, run_context):
+        cb_params = run_context.original_args()
+        step_num = cb_params.cur_step_num
+        if step_num == self.start_step:
+            self.profiler.start()
+
+    def step_end(self, run_context):
+        cb_params = run_context.original_args()
+        step_num = cb_params.cur_step_num
+        if step_num == self.stop_step:
+            self.profiler.stop()
+            self.profiler.analyse()
+            exit()
+
 def main(cfg):
     # init env
-    ms.set_context(mode=cfg.system.mode)
+    # profile_call_back = StopAtStep(5, 10)
+    ms.set_context(mode=cfg.system.mode, max_call_depth=5000)
     if cfg.system.distribute:
         init()
         device_num = get_group_size()
@@ -108,6 +130,10 @@ def main(cfg):
     # create model
     amp_level = cfg.system.get("amp_level", "O0")
     network = build_model(cfg.model, ckpt_load_path=cfg.model.pop("pretrained", None), amp_level=amp_level)
+    # for param in network.get_parameters():
+    #     name = param.name
+    #     value = param.data.numpy()
+    #     print(name, value.shape)
     num_params = sum([param.size for param in network.get_parameters()])
     num_trainable_params = sum([param.size for param in network.trainable_params()])
 
@@ -244,6 +270,7 @@ def main(cfg):
         cfg.scheduler.num_epochs,
         loader_train,
         callbacks=[eval_cb],
+        # callbacks=[eval_cb, profile_call_back],
         dataset_sink_mode=cfg.train.dataset_sink_mode,
         initial_epoch=start_epoch,
     )
