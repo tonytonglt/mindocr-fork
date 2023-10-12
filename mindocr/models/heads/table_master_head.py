@@ -97,7 +97,7 @@ class TableMasterHead(nn.Cell):
         self.PAD = out_channels - 1
 
         self.tril = ops.tril
-        self.argmax = ops.Argmax(axis=-1)
+        self.argmax = ops.Argmax(axis=2)
 
     def make_mask(self, targets):
         """
@@ -114,7 +114,7 @@ class TableMasterHead(nn.Cell):
         target_mask = ops.bitwise_and(target_pad_mask, target_sub_mask)
         return target_mask
 
-    def decode(self, feature, targets,  src_mask=None, tgt_mask=None):
+    def decode(self, feature, targets, src_mask=None, tgt_mask=None):
         # main process of transformer decoder.
         # x = self.embedding(input)  # x: 1*x*512, feature: 1*3600,512
         # x = self.positional_encoding(x)
@@ -227,20 +227,29 @@ class TableMasterHead(nn.Cell):
             targets = targets[0]
             targets = targets[:, :-1]
             target_mask = self.make_mask(targets)
-            logits = self.decode(out_enc, targets, tgt_mask=target_mask)
-            return logits
+            output, bbox_output = self.decode(out_enc, targets, tgt_mask=target_mask)
+            return output, bbox_output
         else:
-            targets = ops.zeros((N, 1), ms.int32)
-            probs = list()
+            input = ops.zeros((N, 1), ms.int32) + self.SOS
+            output = ops.zeros(
+                [input.shape[0], self.max_text_length + 1, self.out_channels])
+            bbox_output = ops.zeros(
+                [input.shape[0], self.max_text_length + 1, self.loc_reg_num])
+            # probs = list()
             for i in range(num_steps):
-                target_mask = self.make_mask(targets)
-                probs_step = self._decode(out_enc, targets, target_mask=target_mask)
-                next_input = self.argmax(probs_step)
-                targets = ops.concat([targets, next_input[:, i: i+1]], axis=1)
-                probs.append(probs_step[:, i])
-            probs = ops.stack(probs, axis=1)
-            probs = ops.softmax(probs, axis=-1)
-        return probs
+                target_mask = self.make_mask(input)
+                out_step, bbox_output_step = self.decode(out_enc, input, tgt_mask=target_mask)
+                prob = ops.softmax(out_step, axis=-1)
+                next_word = self.argmax(prob)
+                input = ops.concat(
+                    [input, next_word[:, -1].unsqueeze(-1)], axis=1)
+                # probs.append(probs_step[:, i])
+                if i == self.max_text_length:
+                    output = out_step
+                    bbox_output = bbox_output_step
+            # probs = ops.stack(probs, axis=1)
+            output = ops.softmax(output, axis=-1)
+        return output, bbox_output
 
 
 class DecoderLayer(nn.Cell):

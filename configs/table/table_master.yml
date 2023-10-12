@@ -3,11 +3,11 @@ system:
   distribute: True
   amp_level: O2
   amp_level_infer: O2 # running inference in O2 mode
-  seed: 42
+  seed: 17
   log_interval: 100
   val_while_train: True
   drop_overflow_update: False
-  ckpt_max_keep: 17
+  ckpt_max_keep: 30
 
 common:
   character_dict_path: &character_dict_path /home/mindocr/tongli/workspace/mindocr-fork_9/mindocr/utils/dict/table_master_structure_dict.txt
@@ -53,13 +53,45 @@ loss:
   name: TableMasterLoss
   ignore_index: 42 # set to len of dict + 3
 
+
 scheduler:
-  scheduler: multi_step_decay
-  milestones: [12, 15]
-  decay_rate: 0.1
+  scheduler: constant
   lr: 0.001
-  num_epochs: 17
+  num_epochs: 16
   warmup_epochs: 0
+
+#scheduler:
+#  scheduler: multi_step_decay
+#  milestones: [14, 17]
+#  decay_rate: 0.1
+#  lr: 0.001
+#  num_epochs: 20
+#  warmup_epochs: 1
+
+#scheduler:
+#  scheduler: multi_step_decay
+#  milestones: [1, 4]
+#  decay_rate: 0.1
+#  lr: 0.001
+#  num_epochs: 8
+#  warmup_epochs: 0
+
+#scheduler:
+#  scheduler: multi_step_decay
+#  milestones: [12, 15]
+#  decay_rate: 0.1
+#  lr: 0.001
+#  num_epochs: 20
+#  warmup_epochs: 0
+
+#scheduler:
+#  scheduler: 'cosine_decay'
+#  lr: 0.001
+#  min_lr: 0.00001
+#  num_epochs: 20
+#  warmup_epochs: 0
+#  decay_epochs: 15
+
 
 optimizer:
   opt: adam
@@ -73,13 +105,21 @@ loss_scaler:
   scale_window: 1000
 
 train:
-  ckpt_save_dir: ./table_try1_0914_with_val_graph_O2_8p_follow_master_separated_layernorm_not_cls_n_box_layer
+#  ckpt_save_dir: ./table_0918_try2_with_val_graph_O2_8p_follow_master_separated_layernorm_not_cls_n_box_layer_ep20_cosine_sche
+#  ckpt_save_dir: ./table_0921_try2_with_val_graph_O2_8p_follow_master_separated_layernorm_not_cls_n_box_layer_ep20_cosine_sche2_decay_epoch15
+#  ckpt_save_dir: ./table_0921_try3_finetune_from_table_0914_try1
+#  ckpt_save_dir: ./table_0926_try1_reproduce_0914_try1_ep20
+  ckpt_save_dir: ./table_1011_try2_continue_1011_try1_from_ep3_constant_lr_ep30_1warmup
   dataset_sink_mode: False
   ema: True
   dataset:
     type: PubTabDataset
     data_dir: /home/mindocr/tongli/data/pubtabnet/train/
     label_file_list: [/home/mindocr/tongli/data/pubtabnet/PubTabNet_2.0.0_train.jsonl]
+#    data_dir: /home/mindocr/tongli/data/pubtabnet/val
+#    label_file_list: [ /home/mindocr/tongli/data/pubtabnet/PubTabNet_2.0.0_val.jsonl ]
+#    data_dir: /home/mindocr/tongli/data/pubtabnet/train_n_val
+#    label_file_list: [ /home/mindocr/tongli/data/pubtabnet/PubTabNet_2.0.0_train_n_val.jsonl ]
     sample_ratio_list: [ 1.0 ]
     shuffle: True
     transform_pipeline:
@@ -123,14 +163,14 @@ train:
     num_workers: 1
 
 eval:
-  ckpt_load_path: ./table_try1_0914_with_val_graph_O2_8p_follow_master_separated_layernorm_not_cls_n_box_layer/best.ckpt
+  ckpt_load_path: ./table_1011_try2_continue_1011_try1_from_ep3_constant_lr_ep30_1warmup/best.ckpt
   dataset_sink_mode: False
   dataset:
     type: PubTabDataset
     data_dir: /home/mindocr/tongli/data/pubtabnet/val
     label_file_list: [ /home/mindocr/tongli/data/pubtabnet/PubTabNet_2.0.0_val.jsonl ]
     sample_ratio_list: [ 1.0 ]
-    shuffle: True
+    shuffle: False
     transform_pipeline:
       - DecodeImage:
           img_mode: BGR

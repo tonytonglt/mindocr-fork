@@ -62,7 +62,7 @@ class StopAtStep(ms.Callback):
 def main(cfg):
     # init env
     # profile_call_back = StopAtStep(5, 10)
-    ms.set_context(mode=cfg.system.mode, max_call_depth=5000)
+    ms.set_context(mode=cfg.system.mode, max_call_depth=10000)
     if cfg.system.distribute:
         init()
         device_num = get_group_size()
@@ -130,6 +130,11 @@ def main(cfg):
     # create model
     amp_level = cfg.system.get("amp_level", "O0")
     network = build_model(cfg.model, ckpt_load_path=cfg.model.pop("pretrained", None), amp_level=amp_level)
+    ms.load_checkpoint(
+        "/home/mindocr/tongli/workspace/mindocr-fork_9/table_1011_try1_continue_1010_try1_from_ep11_constant_lr_ep30_1warmup/e3.ckpt", network)
+    # ms.load_checkpoint("/home/mindocr/tongli/workspace/mindocr-fork_9/table_0921_try3_finetune_from_table_0914_try1/e17.ckpt", network)
+    # ms.load_checkpoint("/home/mindocr/tongli/workspace/mindocr-fork_9/table_0921_try3_finetune_from_table_0914_try1/e3.ckpt", network)
+    # ms.load_checkpoint("/home/mindocr/tongli/workspace/mindocr-fork_9/table_0914_try1_with_val_graph_O2_8p_follow_master_separated_layernorm_not_cls_n_box_layer/e17.ckpt", network)
     # for param in network.get_parameters():
     #     name = param.name
     #     value = param.data.numpy()

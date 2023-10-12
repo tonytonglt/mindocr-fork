@@ -1,22 +1,22 @@
 system:
   mode: 0 # 0 for graph mode, 1 for pynative mode in MindSpore
-  distribute: True
+  distribute: False
   amp_level: O2
   amp_level_infer: O2 # running inference in O2 mode
   seed: 42
-  log_interval: 100
+  log_interval: 1
   val_while_train: True
   drop_overflow_update: False
   ckpt_max_keep: 3
 
 common:
-  character_dict_path: &character_dict_path mindocr/utils/dict/en_dict90.txt
+  character_dict_path: &character_dict_path /home/tongli/workspace/mindocr-fork_11/mindocr/utils/dict/table_master_structure_dict.txt
   num_classes: &num_classes 94 # num_chars_in_dict + 4
-  max_text_len: &max_text_len 30
+  max_text_len: &max_text_len 500
   infer_mode: &infer_mode False
   use_space_char: &use_space_char False
   use_unknown_char: &use_unknown_char True
-  batch_size: &batch_size 512
+  batch_size: &batch_size 10
 
 model:
   type: rec
@@ -79,8 +79,8 @@ train:
   ema_decay: 0.9999
   dataset:
     type: LMDBDataset
-    dataset_root: path/to/data_lmdb_release/
-    data_dir: training/
+    dataset_root: /home/tongli/11_server_backup/tongli/data/lmdb_reproduce/
+    data_dir: training_tiny/
     label_file: null
     sample_ratio: 1.0
     shuffle: True
@@ -99,7 +99,7 @@ train:
           mean: [127.0, 127.0, 127.0]
           std: [127.0, 127.0, 127.0]
       - RecResizeImg:
-          image_shape: [48, 160] # H, W
+          image_shape: [480, 480] # H, W
           infer_mode: *infer_mode
           character_dict_path: *character_dict_path
           padding: True
@@ -120,8 +120,8 @@ eval:
   dataset_sink_mode: False
   dataset:
     type: LMDBDataset
-    dataset_root: path/to/data_lmdb_release/
-    data_dir: validation/
+    dataset_root: /home/tongli/11_server_backup/tongli/data/lmdb_reproduce/
+    data_dir: evaluation/
     label_file: null
     sample_ratio: 1.0
     shuffle: False
@@ -140,7 +140,7 @@ eval:
           mean: [127.0, 127.0, 127.0]
           std: [127.0, 127.0, 127.0]
       - RecResizeImg:
-          image_shape: [48, 160] # H, W
+          image_shape: [480, 480] # H, W
           infer_mode: *infer_mode
           character_dict_path: *character_dict_path
           padding: True
