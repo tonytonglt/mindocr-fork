@@ -50,7 +50,7 @@ logger = logging.getLogger("mindocr.export")
 
 
 def export(name_or_config, data_shape, local_ckpt_path, save_dir, is_dynamic_shape, model_type):
-    ms.set_context(mode=ms.GRAPH_MODE)  # , device_target="Ascend")
+    ms.set_context(mode=ms.GRAPH_MODE, max_call_depth=10000)  # , device_target="Ascend")
     set_logger(name="mindocr")
 
     if name_or_config.endswith(".yml") or name_or_config.endswith(".yaml"):

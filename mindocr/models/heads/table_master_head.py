@@ -252,6 +252,15 @@ class TableMasterHead(nn.Cell):
         return output, bbox_output
 
 
+class LayerNormLayer(nn.Cell):
+    def __init__(self, dims):
+        super(LayerNormLayer, self).__init__()
+        self.layer_norm = nn.LayerNorm[dims]
+
+    def construct(self, x):
+        return self.layer_norm(x)
+
+
 class DecoderLayer(nn.Cell):
     """
     Decoder is made of self attention, srouce attention and feed forward.
@@ -263,108 +272,101 @@ class DecoderLayer(nn.Cell):
         self.src_attn = MultiHeadAttention(headers, d_model, dropout)
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
         # self.sublayer = clones(SubLayerConnection(d_model, dropout), 3)
-        self.norm1 = nn.LayerNorm([d_model])
-        self.dropout1 = nn.Dropout(p=dropout)
-        self.norm2 = nn.LayerNorm([d_model])
-        self.dropout2 = nn.Dropout(p=dropout)
-        self.norm3 = nn.LayerNorm([d_model])
-        self.dropout3 = nn.Dropout(p=dropout)
+        self.norms = nn.CellList(
+            [
+                nn.LayerNorm([d_model]) for _ in range(3)
+            ]
+        )
+        self.dropouts = nn.CellList(
+            [
+                nn.Dropout(p=dropout) for _ in range(3)
+            ]
+        )
+        # self.norm1 = nn.LayerNorm([d_model])
+        # self.dropout1 = nn.Dropout(p=dropout)
+        # self.norm2 = nn.LayerNorm([d_model])
+        # self.dropout2 = nn.Dropout(p=dropout)
+        # self.norm3 = nn.LayerNorm([d_model])
+        # self.dropout3 = nn.Dropout(p=dropout)
 
     def construct(self, x, feature, src_mask, tgt_mask):
         # x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
         # x = self.sublayer[1](
         #     x, lambda x: self.src_attn(x, feature, feature, src_mask))
         # return self.sublayer[2](x, self.feed_forward)
-        normed_x = self.norm1(x)
-        x = x + self.dropout1(self.self_attn(normed_x, normed_x, normed_x, tgt_mask))
-        normed_x = self.norm2(x)
-        x = x + self.dropout2(self.src_attn(normed_x, feature, feature, src_mask))
-        normed_x = self.norm3(x)
-        x = x + self.dropout3(self.feed_forward(normed_x))
+        normed_x = self.norms[0](x)
+        x = x + self.dropouts[0](self.self_attn(normed_x, normed_x, normed_x, tgt_mask))
+        normed_x = self.norms[1](x)
+        x = x + self.dropouts[1](self.src_attn(normed_x, feature, feature, src_mask))
+        normed_x = self.norms[2](x)
+        x = x + self.dropouts[2](self.feed_forward(normed_x))
         return x
 
 
 class MultiHeadAttention(nn.Cell):
-    def __init__(
-        self, multi_attention_heads: int, dimensions: int, dropout: float = 0.1
-    ) -> None:
-        """ """
+    def __init__(self, headers, d_model, dropout):
         super(MultiHeadAttention, self).__init__()
 
-        assert dimensions % multi_attention_heads == 0
-        # requires d_v = d_k, d_q = d_k = d_v = d_m / h
-        self.d_k = int(dimensions / multi_attention_heads)
-        self.h = multi_attention_heads
-        self.linears = nn.CellList([nn.Dense(dimensions, dimensions) for _ in range(4)])
-        self.attention = None
+        assert d_model % headers == 0
+        self.d_k = int(d_model / headers)
+        self.headers = headers
+        self.linears = clones(nn.Dense(d_model, d_model), 4)
         self.dropout = nn.Dropout(p=dropout)
+        self.relu = nn.ReLU()
+        self.batch_matmul = ops.BatchMatMul()
 
-        self.matmul = ops.BatchMatMul()
+    def construct(self, query, key, value, mask=None):
+        B = query.shape[0]
 
-    def dot_product_attention(
-        self, query: Tensor, key: Tensor, value: Tensor, mask: Optional[Tensor] = None
-    ) -> Tuple[Tensor, Tensor]:
+        # 1) Do all the linear projections in batch from d_model => h x d_k
+        # print(self.linears)
+        """
+        CellList<
+          (0): Dense<input_channels=512, output_channels=512, has_bias=True>
+          (1): Dense<input_channels=512, output_channels=512, has_bias=True>
+          (2): Dense<input_channels=512, output_channels=512, has_bias=True>
+          (3): Dense<input_channels=512, output_channels=512, has_bias=True>
+          >
+        """
+        # print('query.shape', query.shape)  # query.shape (20, 499, 512)
+        # print('key.shape', key.shape)  # key.shape (20, 499, 512)
+        # print('value.shape', value.shape)  # value.shape (20, 499, 512)
+        query, key, value = \
+            [l(x).reshape([B, -1, self.headers, self.d_k]).transpose([0, 2, 1, 3])
+             for l, x in zip(self.linears, (query, key, value))]
+        # 2) Apply attention on all the projected vectors in batch
+        x, attn = self.self_attention(
+            query, key, value, mask=mask, dropout=self.dropout)
+        x = x.transpose([0, 2, 1, 3]).reshape([B, -1, self.headers * self.d_k])
+        return self.linears[-1](x)
 
+    def self_attention(self, query, key, value, mask=None, dropout=None):
+        """
+        Compute 'Scale Dot Product Attention'
+        """
         d_k = float(value.shape[-1])
         d_k_sqrt = ops.cast(ms.numpy.sqrt(d_k), query.dtype)
-        score = self.matmul(query, key.transpose(0, 1, 3, 2)) / d_k_sqrt  # (N, h, seq_len, seq_len)
-
+        score = self.batch_matmul(query, key.transpose([0, 1, 3, 2])) / d_k_sqrt
         if mask is not None:
-            score = ops.masked_fill(
-                score, mask == 0, -np.inf
-            )  # score (N, h, seq_len, seq_len)
+            # score = score.masked_fill(mask == 0, -1e9) # b, h, L, L
+            score = ops.masked_fill(score, mask == 0, -6.55e4)  # for fp16
 
         p_attn = ops.softmax(score, axis=-1)
-        # (N, h, seq_len, d_v), (N, h, seq_len, seq_len)
-        return self.matmul(p_attn, value), p_attn
 
-    def construct(
-        self, query: Tensor, key: Tensor, value: Tensor, mask: Optional[Tensor] = None
-    ) -> Tensor:
-        N = query.shape[0]
-
-        # do all the linear projections in batch from d_model => h x d_k
-        # (N, seq_len, d_m) -> (N, seq_len, h, d_k) -> (N, h, seq_len, d_k)
-        query = (
-            self.linears[0](query)
-            .reshape(N, -1, self.h, self.d_k)
-            .transpose(0, 2, 1, 3)
-        )
-        # print(self.linears[1])
-        # print(key.shape)
-        key = (
-            self.linears[1](key).reshape(N, -1, self.h, self.d_k).transpose(0, 2, 1, 3)
-        )
-        value = (
-            self.linears[2](value)
-            .reshape(N, -1, self.h, self.d_k)
-            .transpose(0, 2, 1, 3)
-        )
-
-        # apply attention on all the projected vectors in batch.
-        # (N, h, seq_len, d_v), (N, h, seq_len, seq_len)
-        product_and_attention = self.dot_product_attention(query, key, value, mask=mask)
-        x = product_and_attention[0]
-
-        # "Concat" using a view and apply a final linear.
-        # (N, seq_len, d_m)
-        x = x.transpose(0, 2, 1, 3).reshape(N, -1, self.h * self.d_k)
-
-        # (N, seq_len, d_m)
-        return self.linears[-1](x)
+        if dropout is not None:
+            p_attn = dropout(p_attn)
+        return ops.matmul(p_attn, value), p_attn
 
 
 class PositionwiseFeedForward(nn.Cell):
-    def __init__(
-        self, dimensions: int, feed_forward_dimensions: int, dropout: float = 0.1
-    ) -> None:
+    def __init__(self, d_model, d_ff, dropout):
         super(PositionwiseFeedForward, self).__init__()
-        self.w_1 = nn.Dense(dimensions, feed_forward_dimensions)
-        self.w_2 = nn.Dense(feed_forward_dimensions, dimensions)
+        self.w_1 = nn.Dense(d_model, d_ff)
+        self.w_2 = nn.Dense(d_ff, d_model)
         self.dropout = nn.Dropout(p=dropout)
 
-    def construct(self, input_tensor: Tensor) -> Tensor:
-        return self.w_2(self.dropout(ops.relu(self.w_1(input_tensor))))
+    def construct(self, x):
+        return self.w_2(self.dropout(ops.relu(self.w_1(x))))
 
 
 class SubLayerConnection(nn.Cell):
@@ -401,23 +403,23 @@ class Embeddings(nn.Cell):
 
 
 class PositionalEncoding(nn.Cell):
-    def __init__(
-        self, dimensions: int, dropout: float = 0.1, max_len: int = 5000
-    ) -> None:
+    """ Implement the PE function. """
+
+    def __init__(self, d_model, dropout=0., max_len=5000):
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 
         # Compute the positional encodings once in log space.
-        pe = np.zeros((max_len, dimensions), dtype=np.float32)
-        position = np.arange(0, max_len)[..., None]
-        div_term = np.exp(-np.arange(0, dimensions, 2) * np.log(10000) / dimensions)
-        pe[:, 0::2] = np.sin(position * div_term)
-        pe[:, 1::2] = np.cos(position * div_term)
-        pe = pe[None, ...]
-        self.pe = Tensor(pe, dtype=ms.float32)
+        pe = ops.zeros([max_len, d_model])
+        position = ops.arange(0, max_len).unsqueeze(1).astype('float32')
+        div_term = ops.exp(
+            ops.arange(0, d_model, 2) * -math.log(10000.0) / d_model)
+        pe[:, 0::2] = ops.sin(position * div_term)
+        pe[:, 1::2] = ops.cos(position * div_term)
+        self.pe = pe.unsqueeze(0)
+        # self.register_buffer('pe', pe)
 
-    def construct(self, input_tensor: Tensor) -> Tensor:
-        input_tensor = (
-            input_tensor + self.pe[:, : input_tensor.shape[1]]
-        )  # pe 1 5000 512
-        return self.dropout(input_tensor)
+    def construct(self, feat, **kwargs):
+        # print('!!!!!!!!!!!!!feat.shape', feat.shape)
+        feat = feat + self.pe[:, :ops.shape(feat)[1]]  # pe 1*5000*512
+        return self.dropout(feat)
